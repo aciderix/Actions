@@ -64,12 +64,12 @@ timeout 120 adb push /tmp/frida-server /data/local/tmp/frida-server
 # Write logs on-device so startup failures are visible rather than silently
 # disappearing behind nohup and the connection retry loop.
 echo "[4/7] Starting Frida server"
-# Keep cleanup in a separate Android shell. `pkill -f` searches the complete
-# shell command line; if launch commands containing `frida-server` share this
-# shell, pkill sends SIGTERM to that shell too (exit 143 on the host).
-timeout 30 adb shell "pkill -f '[f]rida-server' || true"
-timeout 30 adb shell "chmod 755 /data/local/tmp/frida-server && nohup /data/local/tmp/frida-server >/data/local/tmp/frida-server.log 2>&1 </dev/null &"
-sleep 2
+# The GitHub-hosted emulator is newly created for every job, so no old Frida
+# process exists to clean up. Keep setup and detachment separate: this is the
+# same launch pattern used by the last successful run (29278682740).
+timeout 30 adb shell "chmod 755 /data/local/tmp/frida-server"
+timeout 30 adb shell "nohup /data/local/tmp/frida-server </dev/null >/dev/null 2>&1 &"
+sleep 3
 
 echo "[5/7] Installing Python dependencies"
 timeout 180 python -m pip install --disable-pip-version-check -r requirements-url-extraction.txt
