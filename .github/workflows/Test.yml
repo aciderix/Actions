@@ -1,21 +1,40 @@
+name: Static APK URL Extraction
+
+on:
+  workflow_dispatch: # Permet de lancer l'action manuellement depuis l'interface GitHub
+  push:
+    paths:
+      - ".github/workflows/android-memory-urls.yml"
+      - "valkyrie-anatomia-2.0.3.apk"
+
 jobs:
   extract-static-urls:
+    name: Extract URLs directly from APK
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Décompresser l'APK et chercher les URLs cachées
         run: |
           mkdir -p extracted_apk results
-          echo "Décompression de l'APK..."
+          
+          echo "1. Décompression de l'APK (valkyrie-anatomia-2.0.3.apk)..."
           unzip -q valkyrie-anatomia-2.0.3.apk -d extracted_apk
           
-          echo "Recherche d'URLs dans le code natif (C++ / Unity)..."
-          # On cherche tout ce qui ressemble à des serveurs de stockage dans les fichiers .so et .dat
-          find extracted_apk -type f \( -name "*.so" -o -name "*.dat" -o -name "*.json" \) -exec strings {} \; | grep -iE 'https?://.*(amazonaws|cloudfront|cdn|valkyrieanatomia)' | sort -u > results/static_urls.txt
+          echo "2. Recherche des URLs de CDN et serveurs dans le code natif..."
+          find extracted_apk -type f \( -name "*.so" -o -name "*.dat" -o -name "*.json" -o -name "*.txt" \) -exec strings {} \; | grep -iE 'https?://.*(amazonaws|cloudfront|cdn|valkyrieanatomia|wonderplanet)' | sort -u > results/cdn_urls.txt
           
+          echo "3. Recherche de TOUTES les adresses web (au cas où)..."
+          find extracted_apk -type f -exec strings {} \; | grep -iE 'https?://[a-zA-Z0-9./_=-]+' | sort -u > results/all_urls.txt
+          
+          echo "Terminé. Fichiers générés :"
+          wc -l results/cdn_urls.txt results/all_urls.txt
+
       - name: Upload des URLs trouvées
         uses: actions/upload-artifact@v4
         with:
           name: static-urls
-          path: results/static_urls.txt
+          path: results/*.txt
