@@ -1,10 +1,43 @@
-- name: Start emulator, install and launch app
+name: Android memory URL extraction
+
+on:
+  workflow_dispatch:
+    inputs:
+      scan_limit_mib:
+        description: Maximum readable memory to scan (MiB); use 0 for no limit
+        required: false
+        default: "768"
+        type: string
+  push:
+    paths:
+      - ".github/workflows/android-memory-urls.yml"
+      - "tools/extract_urls_from_memory.py"
+      - "valkyrie-anatomia-2.0.3.apk"
+
+permissions:
+  contents: read
+
+jobs:
+  extract-urls:
+    name: Extract URLs from app memory
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Start emulator, install and launch app
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
-          arch: x86 # <-- CHANGEMENT ICI : passage en x86 pour la compatibilité ARM 32-bits
-          # Use KVM on the Linux host; the image provides ARM native-bridge support.
+          arch: x86
           disable-linux-hw-accel: false
           emulator-boot-timeout: 1200
           profile: pixel_2
@@ -14,20 +47,16 @@
             set -eu
             adb wait-for-device
             adb root
-            adb wait-for-device # Important : adbd redémarre après le 'adb root'
-            
+            adb wait-for-device
+
             adb install -r valkyrie-anatomia-2.0.3.apk
-            
-            # SUPPRESSION du flag -W pour éviter le timeout
             adb shell am start -n tw.wonderplanet.valkyrieanatomia/jp.libtest.SplashActivity_default
 
-            # Attente active du PID
             PID="$(for _ in $(seq 1 40); do pid="$(adb shell pidof tw.wonderplanet.valkyrieanatomia | tr -d '\r' | cut -d ' ' -f 1)"; test -n "$pid" && { printf '%s' "$pid"; break; }; sleep 3; done)"
-            test -n "$PID" || { echo "L'application n'a pas démarré ; logcat :" >&2; adb logcat -d -t 500 >&2 || true; exit 1; }
-            
-            # FORCE l'ABI en x86 pour correspondre à l'émulateur
+            test -n "$PID" || { echo "The application did not start; logcat:" >&2; adb logcat -d -t 500 >&2 || true; exit 1; }
+
             ABI="x86"
-            FRIDA_VERSION=16.6.6
+            FRIDA_VERSION="16.6.6"
             curl -fsSL -o /tmp/frida-server.xz "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-${ABI}.xz"
             unxz /tmp/frida-server.xz
             adb push /tmp/frida-server /data/local/tmp/frida-server
@@ -35,4 +64,12 @@
             sleep 3
 
             python -m pip install --disable-pip-version-check "frida==${FRIDA_VERSION}"
-            python tools/extract_urls_from_memory.py --pid "$PID" --max-mib "${{ inputs.scan_limit_mib }}" --output results/urls.txt
+            python tools/extract_urls_from_memory.py --pid "$PID" --max-mib "${{ inputs.scan_limit_mib || '768' }}" --output results/urls.txt
+
+      - name: Upload extracted URLs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-urls
+          path: results/urls.txt
+          if-no-files-found: warn
