@@ -14,21 +14,28 @@ permissions:
 
 jobs:
   extract-urls:
-    # The APK contains only ARM native libraries. macOS 14 provides an ARM64 host
-    # with an Android Emulator distribution and native virtualization support.
-    runs-on: macos-14
+    # GitHub-hosted macOS and ARM64 runners do not expose usable nested
+    # virtualization (HVF/KVM), so their ARM emulator exits before ADB starts.
+    # The x86_64 Google APIs image runs on the x86 KVM host and includes ARM
+    # native-bridge support for the ARM-only APK.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      - name: Enable KVM for the Android emulator
+        run: |
+          echo 'KERNEL=="kvm", MODE="0666", GROUP="kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Start emulator, install and launch app
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
-          arch: arm64-v8a
-          # The APK only ships ARM libraries; this image runs them natively.
-          # This setting applies only to Linux; macOS uses its native virtualization support.
+          arch: x86_64
+          # Use KVM on the Linux host; the image provides ARM native-bridge support.
           disable-linux-hw-accel: false
           emulator-boot-timeout: 1200
           profile: pixel_2
