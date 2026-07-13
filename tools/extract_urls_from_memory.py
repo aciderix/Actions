@@ -18,12 +18,17 @@ script_source = r'''
 const urlRe = /https?:\/\/[^\s\x00"\x27<>\\]{4,2048}/g;
 const decoder = new TextDecoder("utf-8", {fatal: false});
 const CHUNK = 1024 * 1024;
+const BATCH = 8;
 const MAX = %d;
+const ranges = Process.enumerateRanges({protection: "r--", coalesce: true});
 let scanned = 0;
-for (const range of Process.enumerateRanges({protection: "r--", coalesce: true})) {
-  if (MAX && scanned >= MAX) break;
-  let offset = 0;
-  while (offset < range.size && (!MAX || scanned < MAX)) {
+let rangeIndex = 0;
+let offset = 0;
+function scanBatch() {
+  let chunks = 0;
+  while (rangeIndex < ranges.length && (!MAX || scanned < MAX) && chunks++ < BATCH) {
+    const range = ranges[rangeIndex];
+    if (offset >= range.size) { rangeIndex++; offset = 0; continue; }
     const size = Math.min(CHUNK, range.size - offset, MAX ? MAX - scanned : CHUNK);
     try {
       const bytes = new Uint8Array(Memory.readByteArray(range.base.add(offset), size));
@@ -33,29 +38,43 @@ for (const range of Process.enumerateRanges({protection: "r--", coalesce: true})
     offset += size;
     scanned += size;
   }
+  if (rangeIndex >= ranges.length || (MAX && scanned >= MAX)) {
+    send({done: true, scanned: scanned});
+  } else {
+    setImmediate(scanBatch);
+  }
 }
-send({done: true, scanned: scanned});
+setImmediate(scanBatch);
 ''' % limit
 
 urls = set()
+done = threading.Event()
+scan_result = {}
 def on_message(message, data):
     if message["type"] == "send" and isinstance(message["payload"], str):
         url = message["payload"].rstrip(".,;:)]}\\\"")
         if re.match(r"^https?://", url, re.I):
             urls.add(url)
+    elif message["type"] == "send" and isinstance(message["payload"], dict) and message["payload"].get("done"):
+        scan_result.update(message["payload"])
+        done.set()
     elif message["type"] == "error":
         print(message.get("stack", message))
+        done.set()
 
 device = frida.get_usb_device(timeout=30)
 session = device.attach(args.pid)
 script = session.create_script(script_source)
 script.on("message", on_message)
 script.load()
-time.sleep(3)
+if not done.wait(timeout=20 * 60):
+    script.unload()
+    session.detach()
+    raise TimeoutError("Memory scan did not finish within 20 minutes")
 script.unload()
 session.detach()
 
 out = Path(args.output)
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text("# URLs extracted from readable memory\n" + "\n".join(sorted(urls)) + "\n", encoding="utf-8")
-print(f"Saved {len(urls)} unique URLs to {out}")
+print(f"Scanned {scan_result.get('scanned', 0)} bytes; saved {len(urls)} unique URLs to {out}")
