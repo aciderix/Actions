@@ -21,7 +21,15 @@ const decoder = new TextDecoder("utf-8", {fatal: false});
 const CHUNK = 1024 * 1024;
 const BATCH = 8;
 const MAX = %d;
-const ranges = Process.enumerateRanges({protection: "r--", coalesce: true});
+// Android application heaps and live network buffers are normally rw-.
+// Scan them first, before read-only and executable mappings, so the optional
+// byte limit prioritizes the process data most likely to contain live URLs.
+const ranges = [];
+for (const protection of ["rw-", "r--", "r-x"]) {
+  for (const range of Process.enumerateRanges({protection: protection, coalesce: true})) {
+    ranges.push(range);
+  }
+}
 let scanned = 0;
 let rangeIndex = 0;
 let offset = 0;
