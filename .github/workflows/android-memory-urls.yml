@@ -3,6 +3,15 @@ name: Android memory URL extraction
 on:
   workflow_dispatch:
     inputs:
+      capture_mode:
+        description: Sélectionnez le compromis vitesse/couverture pour ce lancement
+        required: true
+        default: "network — Appels réseau uniquement (recommandé)"
+        type: choice
+        options:
+          - "network — Appels réseau uniquement (recommandé)"
+          - "memory — Scan mémoire uniquement"
+          - "both — Les deux"
       scan_limit_mib:
         description: Maximum readable memory to scan (MiB); use 0 for no limit
         required: false
@@ -50,7 +59,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
-          script: bash tools/extract_urls_from_emulator.sh "${{ inputs.scan_limit_mib || '768' }}"
+          script: bash tools/extract_urls_from_emulator.sh "${{ inputs.scan_limit_mib || '768' }}" "${{ inputs.capture_mode || 'both' }}"
 
       - name: Upload extracted URLs
         if: always()

@@ -3,6 +3,14 @@
 set -euo pipefail
 
 scan_limit_mib="${1:-768}"
+capture_mode="${2:-both}"
+
+case "$capture_mode" in
+  network|network\ *) capture_mode="network" ;;
+  memory|memory\ *) capture_mode="memory" ;;
+  both|both\ *) capture_mode="both" ;;
+  *) echo "Invalid capture mode: $capture_mode (expected network, memory, or both)" >&2; exit 2 ;;
+esac
 package="tw.wonderplanet.valkyrieanatomia"
 abi="x86"
 frida_version="16.6.6"
@@ -29,4 +37,4 @@ done
 timeout 15 frida-ps -U >/dev/null
 mkdir -p results
 : > results/urls.txt
-timeout 480 python tools/extract_urls_from_memory.py --package "$package" --max-mib "$scan_limit_mib" --network-window 90 --output results/urls.txt
+timeout 600 python tools/extract_urls_from_memory.py --package "$package" --capture-mode "$capture_mode" --max-mib "$scan_limit_mib" --network-window 90 --output results/urls.txt
