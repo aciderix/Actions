@@ -1,40 +1,9 @@
-name: Extract URLs from Android memory
-
-on:
-  workflow_dispatch:
-    inputs:
-      scan_limit_mib:
-        description: "Maximum readable memory to scan (0 = unlimited)"
-        required: true
-        default: "768"
-        type: string
-
-permissions:
-  contents: write
-
-jobs:
-  extract-urls:
-    # GitHub-hosted macOS and ARM64 runners do not expose usable nested
-    # virtualization (HVF/KVM), so their ARM emulator exits before ADB starts.
-    # The x86_64 Google APIs image runs on the x86 KVM host and includes ARM
-    # native-bridge support for the ARM-only APK.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Enable KVM for the Android emulator
-        run: |
-          echo 'KERNEL=="kvm", MODE="0666", GROUP="kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Start emulator, install and launch app
+- name: Start emulator, install and launch app
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
-          arch: x86_64
+          arch: x86 # <-- CHANGEMENT ICI : passage en x86 pour la compatibilité ARM 32-bits
           # Use KVM on the Linux host; the image provides ARM native-bridge support.
           disable-linux-hw-accel: false
           emulator-boot-timeout: 1200
@@ -43,16 +12,21 @@ jobs:
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
           script: |
             set -eu
-            adb root
             adb wait-for-device
+            adb root
+            adb wait-for-device # Important : adbd redémarre après le 'adb root'
+            
             adb install -r valkyrie-anatomia-2.0.3.apk
-            adb shell am start -W -n tw.wonderplanet.valkyrieanatomia/jp.libtest.SplashActivity_default
+            
+            # SUPPRESSION du flag -W pour éviter le timeout
+            adb shell am start -n tw.wonderplanet.valkyrieanatomia/jp.libtest.SplashActivity_default
 
-            # Each script line is invoked separately by android-emulator-runner,
-            # so keep the retry loop on one shell line.
+            # Attente active du PID
             PID="$(for _ in $(seq 1 40); do pid="$(adb shell pidof tw.wonderplanet.valkyrieanatomia | tr -d '\r' | cut -d ' ' -f 1)"; test -n "$pid" && { printf '%s' "$pid"; break; }; sleep 3; done)"
-            test -n "$PID" || { echo "The app process did not start; recent device log follows:" >&2; adb logcat -d -t 300 >&2 || true; exit 1; }
-            ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+            test -n "$PID" || { echo "L'application n'a pas démarré ; logcat :" >&2; adb logcat -d -t 500 >&2 || true; exit 1; }
+            
+            # FORCE l'ABI en x86 pour correspondre à l'émulateur
+            ABI="x86"
             FRIDA_VERSION=16.6.6
             curl -fsSL -o /tmp/frida-server.xz "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-${ABI}.xz"
             unxz /tmp/frida-server.xz
@@ -62,22 +36,3 @@ jobs:
 
             python -m pip install --disable-pip-version-check "frida==${FRIDA_VERSION}"
             python tools/extract_urls_from_memory.py --pid "$PID" --max-mib "${{ inputs.scan_limit_mib }}" --output results/urls.txt
-
-      - name: Publish extracted URLs in the repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add results/urls.txt
-          if git diff --cached --quiet; then
-            echo "No URL changes to commit."
-          else
-            git commit -m "Update URLs extracted from Android memory"
-            git push
-          fi
-
-      - name: Keep result as build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: extracted-urls
-          path: results/urls.txt
-          if-no-files-found: error
