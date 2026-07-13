@@ -16,7 +16,7 @@ adb shell am start -n "${package}/${activity}"
 
 pid=""
 for _ in $(seq 1 40); do
-  pid="$(adb shell pidof "$package" | tr -d "\r" | awk '{print $1}')"
+  pid="$(adb shell pidof "$package" 2>/dev/null | tr -d "\r" | awk '{print $1}' || true)"
   [ -n "$pid" ] && break
   sleep 3
 done
