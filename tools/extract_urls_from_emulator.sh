@@ -16,9 +16,34 @@ abi="x86"
 frida_version="16.6.6"
 
 echo "[1/7] Waiting for the Android emulator"
-timeout 90 adb wait-for-device
-timeout 60 adb root
-timeout 90 adb wait-for-device
+# `adb root` makes adbd restart. During that restart it commonly returns
+# "unable to connect for root: closed" once; retry instead of failing the job.
+timeout 180 bash -c '
+  until adb wait-for-device && [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do
+    echo "Waiting for Android to finish booting..."
+    sleep 3
+  done
+'
+echo "Requesting root ADB access"
+root_ready=false
+for attempt in $(seq 1 12); do
+  if adb root; then
+    root_ready=true
+    break
+  fi
+  echo "ADB root not ready yet (attempt ${attempt}/12); retrying..."
+  sleep 3
+done
+if [[ "$root_ready" != true ]]; then
+  echo "Unable to enable root ADB access after 12 attempts" >&2
+  exit 1
+fi
+timeout 120 bash -c '
+  until adb wait-for-device && [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do
+    echo "Waiting for root ADB to reconnect..."
+    sleep 3
+  done
+'
 
 echo "[2/7] Installing APK"
 timeout 120 adb install -r valkyrie-anatomia-2.0.3.apk
