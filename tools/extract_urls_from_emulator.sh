@@ -15,26 +15,52 @@ package="tw.wonderplanet.valkyrieanatomia"
 abi="x86"
 frida_version="16.6.6"
 
+echo "[1/7] Waiting for the Android emulator"
 timeout 90 adb wait-for-device
 timeout 60 adb root
 timeout 90 adb wait-for-device
+
+echo "[2/7] Installing APK"
 timeout 120 adb install -r valkyrie-anatomia-2.0.3.apk
-curl -fsSL --connect-timeout 30 --max-time 180 -o /tmp/frida-server.xz "https://github.com/frida/frida/releases/download/${frida_version}/frida-server-${frida_version}-android-${abi}.xz"
-unxz -f /tmp/frida-server.xz
+
+echo "[3/7] Preparing Frida server ${frida_version} (${abi})"
+frida_cache_dir="${HOME}/.cache/frida-server"
+frida_archive="${frida_cache_dir}/frida-server-${frida_version}-android-${abi}.xz"
+mkdir -p "$frida_cache_dir"
+if [[ ! -s "$frida_archive" ]]; then
+  curl -fsSL --connect-timeout 30 --max-time 180 -o "$frida_archive" "https://github.com/frida/frida/releases/download/${frida_version}/frida-server-${frida_version}-android-${abi}.xz"
+else
+  echo "Using cached Frida server archive"
+fi
+unxz -c "$frida_archive" > /tmp/frida-server
+chmod 755 /tmp/frida-server
 timeout 120 adb push /tmp/frida-server /data/local/tmp/frida-server
 
-# Keep setup and detachment separate: adb must be able to close immediately
-# after starting frida-server on the emulator.
-timeout 30 adb shell "chmod 755 /data/local/tmp/frida-server"
-timeout 30 adb shell "nohup /data/local/tmp/frida-server </dev/null >/dev/null 2>&1 &"
-sleep 3
+# Write logs on-device so startup failures are visible rather than silently
+# disappearing behind nohup and the connection retry loop.
+echo "[4/7] Starting Frida server"
+timeout 30 adb shell "pkill -f /data/local/tmp/frida-server || true; chmod 755 /data/local/tmp/frida-server; nohup /data/local/tmp/frida-server >/data/local/tmp/frida-server.log 2>&1 </dev/null &"
+sleep 2
 
-timeout 180 python -m pip install --disable-pip-version-check "frida==${frida_version}" frida-tools
-for _ in $(seq 1 15); do
-  timeout 15 frida-ps -U >/dev/null 2>&1 && break
+echo "[5/7] Installing Python dependencies"
+timeout 180 python -m pip install --disable-pip-version-check -r requirements-url-extraction.txt
+
+echo "[6/7] Connecting Frida to the emulator (up to 30 seconds)"
+frida_ready=false
+for _ in $(seq 1 10); do
+  if timeout 5 frida-ps -U >/dev/null 2>&1; then
+    frida_ready=true
+    break
+  fi
   sleep 1
 done
-timeout 15 frida-ps -U >/dev/null
+if [[ "$frida_ready" != true ]]; then
+  echo "Frida could not connect to the emulator. Server log:" >&2
+  adb shell 'cat /data/local/tmp/frida-server.log || true' >&2
+  exit 1
+fi
+
+echo "[7/7] Running ${capture_mode} URL capture"
 mkdir -p results
 : > results/urls.txt
 timeout 600 python tools/extract_urls_from_memory.py --package "$package" --capture-mode "$capture_mode" --max-mib "$scan_limit_mib" --network-window 90 --output results/urls.txt

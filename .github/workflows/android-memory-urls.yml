@@ -32,6 +32,8 @@ jobs:
     name: Extract URLs from app memory
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Check out repository
@@ -41,6 +43,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-url-extraction.txt
+
+      # GitHub-hosted runners are fresh for every job. Preserve the Android
+      # system image and AVD so subsequent runs do not recreate them.
+      - name: Restore Android emulator cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/system-images/android-30/google_apis/x86
+            ~/.android/avd
+            ~/.android/adb*
+          key: android-emulator-api30-google-apis-x86-v1
+
+      - name: Restore Frida server cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/frida-server
+          key: frida-server-16.6.6-android-x86-v1
 
       - name: Enable KVM access
         run: |
@@ -57,6 +78,8 @@ jobs:
           disable-linux-hw-accel: false
           emulator-boot-timeout: 300
           profile: pixel_2
+          avd-name: url-extractor-api30
+          force-avd-creation: false
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
           script: bash tools/extract_urls_from_emulator.sh "${{ inputs.scan_limit_mib || '768' }}" "${{ inputs.capture_mode || 'both' }}"
