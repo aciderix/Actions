@@ -30,7 +30,10 @@ fi
 curl -fsSL -o /tmp/frida-server.xz "https://github.com/frida/frida/releases/download/${frida_version}/frida-server-${frida_version}-android-${abi}.xz"
 unxz -f /tmp/frida-server.xz
 adb push /tmp/frida-server /data/local/tmp/frida-server
-adb shell "chmod 755 /data/local/tmp/frida-server && /data/local/tmp/frida-server >/dev/null 2>&1 &"
+# Redirect all three standard streams before backgrounding on Android. Without
+# stdin redirection, the ADB shell can remain attached to frida-server.
+adb shell "chmod 755 /data/local/tmp/frida-server && /data/local/tmp/frida-server </dev/null >/dev/null 2>&1 &"
+sleep 3
 
 python -m pip install --disable-pip-version-check "frida==${frida_version}"
 for _ in $(seq 1 15); do
