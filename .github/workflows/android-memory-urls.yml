@@ -36,7 +36,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
           script: |
-            set -euo pipefail
+            set -eu
             adb root
             adb wait-for-device
             adb install -r valkyrie-anatomia-2.0.3.apk
