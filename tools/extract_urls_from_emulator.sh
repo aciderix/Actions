@@ -64,11 +64,11 @@ timeout 120 adb push /tmp/frida-server /data/local/tmp/frida-server
 # Write logs on-device so startup failures are visible rather than silently
 # disappearing behind nohup and the connection retry loop.
 echo "[4/7] Starting Frida server"
-# Do not use `pkill -f /data/local/tmp/frida-server`: the pattern also matches
-# the temporary `adb shell` command itself, which terminates it with SIGTERM
-# (exit 143) before the server is launched. The bracketed regex matches only
-# an already-running server process, not this command line.
-timeout 30 adb shell "pkill -f '[f]rida-server' || true; chmod 755 /data/local/tmp/frida-server; nohup /data/local/tmp/frida-server >/data/local/tmp/frida-server.log 2>&1 </dev/null &"
+# Keep cleanup in a separate Android shell. `pkill -f` searches the complete
+# shell command line; if launch commands containing `frida-server` share this
+# shell, pkill sends SIGTERM to that shell too (exit 143 on the host).
+timeout 30 adb shell "pkill -f '[f]rida-server' || true"
+timeout 30 adb shell "chmod 755 /data/local/tmp/frida-server && nohup /data/local/tmp/frida-server >/data/local/tmp/frida-server.log 2>&1 </dev/null &"
 sleep 2
 
 echo "[5/7] Installing Python dependencies"
