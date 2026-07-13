@@ -47,10 +47,20 @@ jobs:
             adb wait-for-device
             adb install -r valkyrie-anatomia-2.0.3.apk
             adb shell monkey -p tw.wonderplanet.valkyrieanatomia 1
-            sleep 30
 
-            PID="$(adb shell pidof tw.wonderplanet.valkyrieanatomia | tr -d '\r' | cut -d ' ' -f 1)"
-            test -n "$PID"
+            # Startup time varies on a clean emulator.  Wait for the process rather
+            # than assuming it is ready after a fixed delay.
+            PID=""
+            for _ in $(seq 1 40); do
+              PID="$(adb shell pidof tw.wonderplanet.valkyrieanatomia | tr -d '\r' | cut -d ' ' -f 1)"
+              test -n "$PID" && break
+              sleep 3
+            done
+            if test -z "$PID"; then
+              echo "The app process did not start; recent device log follows:" >&2
+              adb logcat -d -t 300 >&2 || true
+              exit 1
+            fi
             ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
             FRIDA_VERSION=16.6.6
             curl -fsSL -o /tmp/frida-server.xz "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-${ABI}.xz"
