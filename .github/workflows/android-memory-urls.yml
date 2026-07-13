@@ -12,6 +12,7 @@ on:
     paths:
       - ".github/workflows/android-memory-urls.yml"
       - "tools/extract_urls_from_memory.py"
+      - "tools/extract_urls_from_emulator.sh"
       - "valkyrie-anatomia-2.0.3.apk"
 
 permissions:
