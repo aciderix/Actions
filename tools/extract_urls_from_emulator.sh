@@ -37,7 +37,7 @@ adb shell "chmod 755 /data/local/tmp/frida-server"
 adb shell "nohup /data/local/tmp/frida-server </dev/null >/dev/null 2>&1 &"
 sleep 3
 
-python -m pip install --disable-pip-version-check "frida==${frida_version}"
+python -m pip install --disable-pip-version-check "frida==${frida_version}" frida-tools
 for _ in $(seq 1 15); do
   frida-ps -U >/dev/null 2>&1 && break
   sleep 1
