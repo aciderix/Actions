@@ -16,28 +16,24 @@ parser.add_argument("--max-mib", type=int, default=768, help="Maximum readable m
 parser.add_argument("--network-window", type=int, default=90, help="Seconds to observe network calls after launch")
 args = parser.parse_args()
 
+# URLs may straddle two memory reads. Keep enough trailing bytes to reconstruct
+# even the longest URL accepted below, without repeatedly scanning whole chunks.
+CHUNK_OVERLAP = 4096
+ASCII_URL_RE = re.compile(rb'https?://[^\s\x00"\x27<>\\\\]{4,2048}', re.I)
+UTF16LE_URL_RE = re.compile(
+    rb'h\x00t\x00t\x00p\x00s?\x00:\x00/\x00/\x00(?:(?:[^\x00\s"\x27<>\\\\])\x00){4,2048}',
+    re.I,
+)
+
 limit = args.max_mib * 1024 * 1024 if args.max_mib else 0
 window_ms = max(0, args.network_window) * 1000
 script_source = r'''
-const urlRe = /https?:\/\/[^\s\x00"\x27<>\\]{4,2048}/g;
 const CHUNK = 1024 * 1024;
-const BATCH = 8;
 const MAX = %d;
 const NETWORK_WINDOW = %d;
 
 function report(kind, value) {
   if (value) send({kind: kind, value: String(value)});
-}
-
-// Frida's QuickJS runtime does not provide TextDecoder. URLs are ASCII, so a
-// byte-to-ASCII conversion is sufficient and avoids the unavailable API.
-function ascii(bytes, step) {
-  let text = "";
-  for (let i = 0; i < bytes.length; i += step) {
-    const value = bytes[i];
-    text += value < 128 ? String.fromCharCode(value) : " ";
-  }
-  return text;
 }
 
 function hookNetwork() {
@@ -93,57 +89,87 @@ let rangeIndex = 0;
 let offset = 0;
 let memoryDone = false;
 let timerDone = NETWORK_WINDOW === 0;
+
 function finishIfReady() {
   if (memoryDone && timerDone) send({kind: "done", scanned: scanned});
 }
-function scanBatch() {
-  let chunks = 0;
-  while (rangeIndex < ranges.length && (!MAX || scanned < MAX) && chunks++ < BATCH) {
-    const range = ranges[rangeIndex];
-    if (offset >= range.size) { rangeIndex++; offset = 0; continue; }
-    const size = Math.min(CHUNK, range.size - offset, MAX ? MAX - scanned : CHUNK);
-    try {
-      const bytes = new Uint8Array(Memory.readByteArray(range.base.add(offset), size));
-      const found = new Set();
-      for (const text of [ascii(bytes, 1), ascii(bytes, 2)]) {
-        const matches = text.match(urlRe);
-        if (matches) for (const url of matches) found.add(url);
-      }
-      for (const url of found) report("memory", url);
-    } catch (_) {}
-    offset += size;
-    scanned += size;
-  }
+function completeMemory() {
+  memoryDone = true;
+  finishIfReady();
+}
+function scanNext() {
   if (rangeIndex >= ranges.length || (MAX && scanned >= MAX)) {
-    memoryDone = true;
-    finishIfReady();
-  } else setImmediate(scanBatch);
+    completeMemory();
+    return;
+  }
+  const range = ranges[rangeIndex];
+  if (offset >= range.size) {
+    rangeIndex++;
+    offset = 0;
+    setImmediate(scanNext);
+    return;
+  }
+  const size = Math.min(CHUNK, range.size - offset, MAX ? MAX - scanned : CHUNK);
+  offset += size;
+  scanned += size;
+  try {
+    const bytes = Memory.readByteArray(range.base.add(offset - size), size);
+    // Do no string conversion or regex work in QuickJS. Python receives this
+    // binary buffer, scans it, then explicitly allows the next chunk.
+    recv("ack", function () { setImmediate(scanNext); });
+    send({kind: "memory-chunk", size: size}, bytes);
+  } catch (_) {
+    setImmediate(scanNext);
+  }
 }
 setTimeout(function () { timerDone = true; finishIfReady(); }, NETWORK_WINDOW);
-setImmediate(scanBatch);
+setImmediate(scanNext);
 ''' % (limit, window_ms)
 
 memory_urls = set()
 network_urls = set()
 done = threading.Event()
 scan_result = {}
+previous_bytes = b""
+
 
 def normalise(value):
     return value.rstrip(".,;:)]}\\\"")
 
+
+def add_memory_matches(data):
+    global previous_bytes
+    combined = previous_bytes + bytes(data)
+    for match in ASCII_URL_RE.finditer(combined):
+        memory_urls.add(normalise(match.group().decode("ascii", errors="ignore")))
+    for match in UTF16LE_URL_RE.finditer(combined):
+        memory_urls.add(normalise(match.group().decode("utf-16le", errors="ignore")))
+    previous_bytes = combined[-CHUNK_OVERLAP:]
+
+
 def on_message(message, data):
     if message["type"] == "send" and isinstance(message["payload"], dict):
         payload = message["payload"]
-        if payload.get("kind") in {"memory", "network"}:
+        kind = payload.get("kind")
+        if kind == "memory-chunk":
+            try:
+                if data:
+                    add_memory_matches(data)
+            finally:
+                # Back-pressure keeps Frida responsive and caps in-flight data
+                # to one chunk while Python handles the binary regex search.
+                script.post({"type": "ack"})
+        elif kind == "network":
             url = normalise(payload.get("value", ""))
             if re.match(r"^https?://", url, re.I):
-                (memory_urls if payload["kind"] == "memory" else network_urls).add(url)
-        elif payload.get("kind") == "done":
+                network_urls.add(url)
+        elif kind == "done":
             scan_result.update(payload)
             done.set()
     elif message["type"] == "error":
         print(message.get("stack", message))
         done.set()
+
 
 device = frida.get_usb_device(timeout=30)
 pid = device.spawn([args.package]) if args.package else args.pid
@@ -153,10 +179,10 @@ script.on("message", on_message)
 script.load()
 if args.package:
     device.resume(pid)
-if not done.wait(timeout=20 * 60):
+if not done.wait(timeout=8 * 60):
     script.unload()
     session.detach()
-    raise TimeoutError("Memory scan and network observation did not finish within 20 minutes")
+    raise TimeoutError("Memory scan and network observation did not finish within 8 minutes")
 script.unload()
 session.detach()
 
