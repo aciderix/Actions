@@ -42,7 +42,7 @@ function report(kind, value) {
 }
 
 function hookNetwork() {
-  if (!Java.available) return;
+  // CORRECTION: On laisse Frida attendre automatiquement que la VM Java soit prête.
   Java.perform(function () {
     try {
       const URL = Java.use("java.net.URL");
@@ -187,17 +187,32 @@ def on_message(message, data):
 device = frida.get_usb_device(timeout=30)
 pid = device.spawn([args.package]) if args.package else args.pid
 session = device.attach(pid)
+
+# CORRECTION: Écoute de l'événement 'detached' en cas de crash de l'application
+def on_detached(reason, *crash_args):
+    print(f"\n[!] Session Frida détachée (raison: {reason}). L'application s'est fermée ou a crashé.")
+    done.set()
+
+session.on("detached", on_detached)
+
 script = session.create_script(script_source)
 script.on("message", on_message)
 script.load()
+
 if args.package:
     device.resume(pid)
+
 if not done.wait(timeout=8 * 60):
     script.unload()
     session.detach()
     raise TimeoutError("Memory scan and network observation did not finish within 8 minutes")
-script.unload()
-session.detach()
+
+# Nettoyage sécurisé
+try:
+    script.unload()
+    session.detach()
+except Exception:
+    pass  # Ignore si la session est déjà détachée à cause d'un crash
 
 out = Path(args.output)
 out.parent.mkdir(parents=True, exist_ok=True)
@@ -208,6 +223,6 @@ if capture_network:
     sections.append("# Network calls captured during app launch\n" + "\n".join(sorted(network_urls)))
 out.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
 print(
-    f"Mode {args.capture_mode}; scanned {scan_result.get('scanned', 0)} bytes; "
+    f"\nMode {args.capture_mode}; scanned {scan_result.get('scanned', 0)} bytes; "
     f"saved {len(memory_urls)} memory URLs and {len(network_urls)} network calls to {out}"
 )
