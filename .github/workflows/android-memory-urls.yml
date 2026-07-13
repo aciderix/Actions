@@ -46,7 +46,7 @@ jobs:
             adb root
             adb wait-for-device
             adb install -r valkyrie-anatomia-2.0.3.apk
-            adb shell monkey -p tw.wonderplanet.valkyrieanatomia 1
+            adb shell am start -W -n tw.wonderplanet.valkyrieanatomia/jp.libtest.SplashActivity_default
 
             # Each script line is invoked separately by android-emulator-runner,
             # so keep the retry loop on one shell line.
