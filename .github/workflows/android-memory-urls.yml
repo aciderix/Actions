@@ -14,8 +14,9 @@ permissions:
 
 jobs:
   extract-urls:
-    # The APK contains only ARM native libraries, so the emulator must run on an ARM64 host.
-    runs-on: ubuntu-24.04-arm
+    # The APK contains only ARM native libraries. macOS 14 provides an ARM64 host
+    # with an Android Emulator distribution and native virtualization support.
+    runs-on: macos-14
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,7 @@ jobs:
           target: google_apis
           arch: arm64-v8a
           # The APK only ships ARM libraries; this image runs them natively.
-          # Use KVM on the ARM64 runner; software emulation cannot start an ARM AVD on x86 hosts.
+          # This setting applies only to Linux; macOS uses its native virtualization support.
           disable-linux-hw-accel: false
           emulator-boot-timeout: 1200
           profile: pixel_2
