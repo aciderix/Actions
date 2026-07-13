@@ -20,13 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # GitHub hosted runners expose KVM but require a udev rule before the emulator starts.
-      - name: Enable hardware acceleration for the emulator
-        run: |
-          echo 'KERNEL=="kvm", MODE="0666", GROUP="kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
       - name: Start emulator, install and launch app
         uses: reactivecircus/android-emulator-runner@v2
         with:
