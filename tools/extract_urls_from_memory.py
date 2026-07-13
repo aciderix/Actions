@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Capture Android network URLs and URLs found in readable process memory via Frida."""
 import argparse
+import os
 import re
+import sys
 import threading
 from pathlib import Path
 
@@ -42,7 +44,6 @@ function report(kind, value) {
 }
 
 function hookNetwork() {
-  // CORRECTION: On laisse Frida attendre automatiquement que la VM Java soit prête.
   Java.perform(function () {
     try {
       const URL = Java.use("java.net.URL");
@@ -121,8 +122,6 @@ function scanNext() {
   scanned += size;
   try {
     const bytes = Memory.readByteArray(range.base.add(offset - size), size);
-    // Do no string conversion or regex work in QuickJS. Python receives this
-    // binary buffer, scans it, then explicitly allows the next chunk.
     recv("ack", function () { setImmediate(scanNext); });
     send({kind: "memory-chunk", size: size}, bytes);
   } catch (_) {
@@ -169,50 +168,56 @@ def on_message(message, data):
                 if data:
                     add_memory_matches(data)
             finally:
-                # Back-pressure keeps Frida responsive and caps in-flight data
-                # to one chunk while Python handles the binary regex search.
                 script.post({"type": "ack"})
         elif kind == "network":
             url = normalise(payload.get("value", ""))
             if re.match(r"^https?://", url, re.I):
-                network_urls.add(url)
+                if url not in network_urls:
+                    print(f"[*] Nouvel appel réseau capturé : {url}", flush=True)
+                    network_urls.add(url)
         elif kind == "done":
+            print("\n[*] Script JavaScript Frida terminé (90s écoulées).", flush=True)
             scan_result.update(payload)
             done.set()
     elif message["type"] == "error":
-        print(message.get("stack", message))
+        print(f"\n[!] Erreur Frida : {message.get('stack', message)}", flush=True)
         done.set()
 
 
+print("[Python] Connexion à l'émulateur...", flush=True)
 device = frida.get_usb_device(timeout=30)
-pid = device.spawn([args.package]) if args.package else args.pid
+
+if args.package:
+    print(f"[Python] Injection au démarrage de l'app '{args.package}'...", flush=True)
+    pid = device.spawn([args.package])
+else:
+    pid = args.pid
+
+print(f"[Python] Attachement au processus ID {pid}...", flush=True)
 session = device.attach(pid)
 
-# CORRECTION: Écoute de l'événement 'detached' en cas de crash de l'application
 def on_detached(reason, *crash_args):
-    print(f"\n[!] Session Frida détachée (raison: {reason}). L'application s'est fermée ou a crashé.")
+    print(f"\n[!] Application fermée ou crachée (Raison : {reason}).", flush=True)
     done.set()
 
 session.on("detached", on_detached)
 
+print("[Python] Chargement de l'intercepteur réseau...", flush=True)
 script = session.create_script(script_source)
 script.on("message", on_message)
 script.load()
 
 if args.package:
+    print("[Python] Reprise de l'application (Démarrage effectif). En attente...", flush=True)
     device.resume(pid)
 
-if not done.wait(timeout=8 * 60):
-    script.unload()
-    session.detach()
-    raise TimeoutError("Memory scan and network observation did not finish within 8 minutes")
+# Attente avec un timeout de 8 minutes de secours
+is_timeout = not done.wait(timeout=8 * 60)
 
-# Nettoyage sécurisé
-try:
-    script.unload()
-    session.detach()
-except Exception:
-    pass  # Ignore si la session est déjà détachée à cause d'un crash
+if is_timeout:
+    print("\n[!] Timeout de sécurité atteint (8 minutes). L'application s'est probablement figée à cause d'une incompatibilité ou d'un anti-cheat.", flush=True)
+
+print(f"\n[Python] Sauvegarde des résultats ({len(network_urls)} URLs réseau trouvées)...", flush=True)
 
 out = Path(args.output)
 out.parent.mkdir(parents=True, exist_ok=True)
@@ -221,8 +226,10 @@ if capture_memory:
     sections.append("# URLs extracted from readable memory\n" + "\n".join(sorted(memory_urls)))
 if capture_network:
     sections.append("# Network calls captured during app launch\n" + "\n".join(sorted(network_urls)))
+
 out.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
-print(
-    f"\nMode {args.capture_mode}; scanned {scan_result.get('scanned', 0)} bytes; "
-    f"saved {len(memory_urls)} memory URLs and {len(network_urls)} network calls to {out}"
-)
+print(f"[*] Les résultats ont été écrits dans {out}", flush=True)
+
+# Tuer brutalement le script Python pour s'assurer que des threads Frida orphelins 
+# n'empêchent pas la fermeture et génèrent le Timeout bash "Exit code 124".
+os._exit(0)
