@@ -17,7 +17,9 @@ args = parser.parse_args()
 limit = args.max_mib * 1024 * 1024 if args.max_mib else 0
 script_source = r'''
 const urlRe = /https?:\/\/[^\s\x00"\x27<>\\]{4,2048}/g;
-const decoder = new TextDecoder("utf-8", {fatal: false});
+// Android strings may be stored as UTF-8 or UTF-16LE. Search both forms.
+const utf8Decoder = new TextDecoder("utf-8", {fatal: false});
+const utf16Decoder = new TextDecoder("utf-16le", {fatal: false});
 const CHUNK = 1024 * 1024;
 const BATCH = 8;
 const MAX = %d;
@@ -41,8 +43,14 @@ function scanBatch() {
     const size = Math.min(CHUNK, range.size - offset, MAX ? MAX - scanned : CHUNK);
     try {
       const bytes = new Uint8Array(Memory.readByteArray(range.base.add(offset), size));
-      const found = decoder.decode(bytes).match(urlRe);
-      if (found) for (const url of found) send(url);
+      // Java/Kotlin strings are frequently UTF-16LE, while native buffers and
+      // embedded resources are normally UTF-8. A set removes duplicate hits.
+      const found = new Set();
+      for (const decoder of [utf8Decoder, utf16Decoder]) {
+        const matches = decoder.decode(bytes).match(urlRe);
+        if (matches) for (const url of matches) found.add(url);
+      }
+      for (const url of found) send(url);
     } catch (_) {}
     offset += size;
     scanned += size;
