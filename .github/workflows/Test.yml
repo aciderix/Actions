@@ -1,0 +1,21 @@
+jobs:
+  extract-static-urls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Décompresser l'APK et chercher les URLs cachées
+        run: |
+          mkdir -p extracted_apk results
+          echo "Décompression de l'APK..."
+          unzip -q valkyrie-anatomia-2.0.3.apk -d extracted_apk
+          
+          echo "Recherche d'URLs dans le code natif (C++ / Unity)..."
+          # On cherche tout ce qui ressemble à des serveurs de stockage dans les fichiers .so et .dat
+          find extracted_apk -type f \( -name "*.so" -o -name "*.dat" -o -name "*.json" \) -exec strings {} \; | grep -iE 'https?://.*(amazonaws|cloudfront|cdn|valkyrieanatomia)' | sort -u > results/static_urls.txt
+          
+      - name: Upload des URLs trouvées
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-urls
+          path: results/static_urls.txt
