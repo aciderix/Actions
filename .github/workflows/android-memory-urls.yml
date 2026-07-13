@@ -49,28 +49,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
-          script: |
-            set -eu
-            adb wait-for-device
-            adb root
-            adb wait-for-device
-
-            adb install -r valkyrie-anatomia-2.0.3.apk
-            adb shell am start -n tw.wonderplanet.valkyrieanatomia/jp.libtest.SplashActivity_default
-
-            PID="$(for _ in $(seq 1 40); do pid="$(adb shell pidof tw.wonderplanet.valkyrieanatomia | tr -d '\r' | cut -d ' ' -f 1)"; test -n "$pid" && { printf '%s' "$pid"; break; }; sleep 3; done)"
-            test -n "$PID" || { echo "The application did not start; logcat:" >&2; adb logcat -d -t 500 >&2 || true; exit 1; }
-
-            ABI="x86"
-            FRIDA_VERSION="16.6.6"
-            curl -fsSL -o /tmp/frida-server.xz "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-${ABI}.xz"
-            unxz /tmp/frida-server.xz
-            adb push /tmp/frida-server /data/local/tmp/frida-server
-            adb shell "chmod 755 /data/local/tmp/frida-server && /data/local/tmp/frida-server >/dev/null 2>&1 &"
-            sleep 3
-
-            python -m pip install --disable-pip-version-check "frida==${FRIDA_VERSION}"
-            python tools/extract_urls_from_memory.py --pid "$PID" --max-mib "${{ inputs.scan_limit_mib || '768' }}" --output results/urls.txt
+          script: bash tools/extract_urls_from_emulator.sh "${{ inputs.scan_limit_mib || '768' }}"
 
       - name: Upload extracted URLs
         if: always()
