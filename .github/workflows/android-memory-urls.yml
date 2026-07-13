@@ -29,12 +29,12 @@ jobs:
       - name: Start emulator, install and launch app
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          api-level: 29
           target: google_apis
-          arch: x86_64
+          arch: x86
           profile: pixel_2
           disable-animations: true
-          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
           script: |
             set -euo pipefail
             adb root
